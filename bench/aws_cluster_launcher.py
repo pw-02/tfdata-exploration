@@ -313,6 +313,13 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
 
     return [
         "set -eux",
+
+        # 🔥 Kill old cluster processes (safe, targeted)
+        "pkill -f dispatcher.py || true",
+        "pkill -f worker.py || true",
+        "pkill -f run_benchmark.py || true",
+        "sleep 2",
+
         (
             "SUDO='' ; "
             "if command -v sudo >/dev/null 2>&1; then SUDO='sudo'; fi ; "
