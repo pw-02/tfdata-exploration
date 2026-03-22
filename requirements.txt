@@ -1,6 +1,6 @@
 tensorflow==2.16.1
 # tensorflow[and-cuda]
-tensorflow-io==0.37.1
+tensorpytho=0.37.1
 numpy
 pandas
 matplotlib

@@ -20,6 +20,7 @@ class NodeGroupSpec:
     iam_instance_profile_name: str
     key_name: Optional[str] = None
     user_data: Optional[str] = None
+    root_volume_size_gb: Optional[int] = None
 
 
 class AWSClusterLauncher:
@@ -42,7 +43,6 @@ class AWSClusterLauncher:
             "NodeGroup": spec.name,
             "ManagedBy": "aws_cluster_launcher",
         }
-
         if extra_tags:
             tag_map.update(extra_tags)
 
@@ -61,6 +61,18 @@ class AWSClusterLauncher:
                 {"ResourceType": "volume", "Tags": tags},
             ],
         }
+
+        if spec.root_volume_size_gb:
+            params["BlockDeviceMappings"] = [
+                {
+                    "DeviceName": "/dev/sda1",
+                    "Ebs": {
+                        "VolumeSize": spec.root_volume_size_gb,
+                        "VolumeType": "gp3",
+                        "DeleteOnTermination": True,
+                    },
+                }
+            ]
 
         if spec.key_name:
             params["KeyName"] = spec.key_name
@@ -162,6 +174,7 @@ class AWSClusterLauncher:
             iam_instance_profile_name=spec.iam_instance_profile_name,
             key_name=spec.key_name,
             user_data=spec.user_data,
+            root_volume_size_gb=spec.root_volume_size_gb,
         )
 
         merged_tags = {"NodeGroup": spec.name}
@@ -273,8 +286,12 @@ class AWSClusterLauncher:
                     continue
 
                 status = inv["Status"]
-
                 if status == "Success":
+                    print(f"\n=== Command {command_id} succeeded on {iid} ===")
+                    print("STDOUT:")
+                    print(inv.get("StandardOutputContent", ""))
+                    print("STDERR:")
+                    print(inv.get("StandardErrorContent", ""))
                     done.add(iid)
                 elif status in {"Pending", "InProgress", "Delayed", "Cancelling"}:
                     all_ok = False
@@ -304,23 +321,56 @@ class AWSClusterLauncher:
             return
         self.ec2.terminate_instances(InstanceIds=instance_ids)
         print(f"Terminate requested for: {instance_ids}")
+
+def _aws_env_commands(region: str) -> List[str]:
+    return [
+        f"export AWS_REGION={region}",
+        f"export AWS_DEFAULT_REGION={region}",
+        (
+            'TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" '
+            '-H "X-aws-ec2-metadata-token-ttl-seconds: 21600")'
+        ),
+        (
+            'ROLE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" '
+            'http://169.254.169.254/latest/meta-data/iam/security-credentials/)'
+        ),
+        (
+            'CREDS=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" '
+            'http://169.254.169.254/latest/meta-data/iam/security-credentials/$ROLE)'
+        ),
+        (
+            'export AWS_ACCESS_KEY_ID=$(echo "$CREDS" | python3 -c '
+            '"import sys, json; print(json.load(sys.stdin)[\'AccessKeyId\'])")'
+        ),
+        (
+            'export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | python3 -c '
+            '"import sys, json; print(json.load(sys.stdin)[\'SecretAccessKey\'])")'
+        ),
+        (
+            'export AWS_SESSION_TOKEN=$(echo "$CREDS" | python3 -c '
+            '"import sys, json; print(json.load(sys.stdin)[\'Token\'])")'
+        ),
+    ]
+
+
 def _bootstrap_repo_commands(code_dir: str) -> List[str]:
     repo_url = "https://github.com/pw-02/tfdata-exploration.git"
     repo_parent = "/".join(code_dir.rstrip("/").split("/")[:-1]) or "/"
     repo_name = code_dir.rstrip("/").split("/")[-1]
-    venv_dir = f"{code_dir}/.venv"
+
+    conda_dir = "/opt/miniconda3"
+    conda_bin = f"{conda_dir}/bin/conda"
+    env_name = "tfbench"
 
     return [
         "set -eux",
 
-        # 🔥 Kill old cluster processes
         "pkill -f dispatcher.py || true",
         "pkill -f worker.py || true",
         "pkill -f run_benchmark.py || true",
         "pkill -f trainer.py || true",
         "sleep 2",
 
-        # 📦 Install system deps
         (
             "SUDO='' ; "
             "if command -v sudo >/dev/null 2>&1; then SUDO='sudo'; fi ; "
@@ -330,17 +380,16 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
             "    -o Dpkg::Use-Pty=0 "
             "    -o Dpkg::Options::=--force-confdef "
             "    -o Dpkg::Options::=--force-confold "
-            "    git python3 python3-pip python3-venv; "
+            "    git wget curl bzip2 ca-certificates; "
             "elif command -v dnf >/dev/null 2>&1; then "
-            "  $SUDO dnf install -y git python3 python3-pip; "
+            "  $SUDO dnf install -y git wget curl bzip2 ca-certificates; "
             "elif command -v yum >/dev/null 2>&1; then "
-            "  $SUDO yum install -y git python3 python3-pip; "
+            "  $SUDO yum install -y git wget curl bzip2 ca-certificates; "
             "else "
             "  echo 'No supported package manager found'; exit 1; "
             "fi"
         ),
 
-        # 📂 Clone repo
         f"mkdir -p {repo_parent}",
         f"cd {repo_parent}",
         (
@@ -348,62 +397,63 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
             f"git clone {repo_url} {repo_name}; "
             "fi"
         ),
-
-        # 📦 Setup Python env
         f"cd {code_dir}",
         "git pull --ff-only || true",
 
-        # Fix permissions (important!)
-        f"sudo chown -R $(id -un):$(id -gn) {code_dir} || true",
+        # Install Miniconda if needed
+        (
+            f"if [ ! -x {conda_bin} ]; then "
+            "  mkdir -p /tmp/miniconda-installer; "
+            "  wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh "
+            "    -O /tmp/miniconda-installer/miniconda.sh; "
+            f"  sudo bash /tmp/miniconda-installer/miniconda.sh -b -u -p {conda_dir}; "
 
-        f"python3 -m venv {venv_dir}",
-        f". {venv_dir}/bin/activate",
+            "fi"
+        ),
 
-        "python -m pip install --upgrade pip",
-        "python -m pip install -r requirements.txt",
+        # Make sure conda is usable in non-interactive shell
+        f"{conda_bin} --version",
+        # Accept ToS (required for non-interactive)
+        f"{conda_bin} tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main",
+        f"{conda_bin} tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r",
 
-        # ✅ Install AWS CLI (in venv)
-        "python -m pip install awscli",
+        # Create env if missing
+        (
+            f"if ! {conda_bin} env list | awk '{{print $1}}' | grep -qx {env_name}; then "
+            f"  {conda_bin} create -y -n {env_name} python=3.10; "
+            "fi"
+        ),
 
-        # 🔍 Verify AWS works (helps debugging)
-        "aws --version",
-        "aws sts get-caller-identity || true",
-
-        # # 📥 Optional: download dataset locally (recommended)
-        # "mkdir -p /tmp/sdl-cifar10/train",
-        # (
-        #     "if [ ! -d /tmp/sdl-cifar10/train ] || "
-        #     "[ -z \"$(find /tmp/sdl-cifar10/train -type f 2>/dev/null | head -1)\" ]; then "
-        #     "  echo 'Syncing dataset from S3...'; "
-        #     "  aws s3 sync s3://sdl-cifar10/train /tmp/sdl-cifar10/train; "
-        #     "else "
-        #     "  echo 'Dataset already present, skipping sync'; "
-        #     "fi"
-        # ),
+        # Install project deps inside env
+        f"{conda_bin} run -n {env_name} python --version",
+        f"{conda_bin} run -n {env_name} python -m pip install --upgrade pip",
+        f"{conda_bin} run -n {env_name} python -m pip install -r requirements.txt",
+        f"{conda_bin} run -n {env_name} python -m pip install awscli",
 
         "mkdir -p logs",
     ]
+
 def build_dispatcher_command(
     repo_dir: str,
     run_dir: str,
     dispatcher_port: int,
     work_dir: str,
+    region: str = "us-west-2",
+
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
-    venv_activate = f". {repo_dir}/.venv/bin/activate"
+    conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
 
     cmds.extend([
-        venv_activate,
         f"cd {run_dir}",
-        "pwd",
-        "ls -la",
+        *(_aws_env_commands(region)),
         "mkdir -p logs",
         f"mkdir -p {work_dir}",
         (
             "if pgrep -af 'dispatcher.py' >/dev/null; then "
             "echo 'dispatcher already running'; "
             "else "
-            f"nohup python -u dispatcher.py "
+            f"nohup {conda_run} python -u dispatcher.py "
             f"--port {dispatcher_port} "
             f"--work-dir {work_dir} "
             f"> logs/dispatcher.log 2>&1 & "
@@ -413,15 +463,12 @@ def build_dispatcher_command(
         (
             "if ! pgrep -af 'dispatcher.py' >/dev/null; then "
             "echo 'dispatcher failed to start'; "
-            "echo '==== dispatcher.log ===='; "
             "cat logs/dispatcher.log || true; "
-            "echo '==== end dispatcher.log ===='; "
             "exit 1; "
             "fi"
         ),
     ])
     return cmds
-
 
 def build_worker_commands(
     repo_dir: str,
@@ -429,15 +476,15 @@ def build_worker_commands(
     dispatcher_address: str,
     worker_ports: List[int],
     worker_host: str,
+    region: str = "us-west-2",
+
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
-    venv_activate = f". {repo_dir}/.venv/bin/activate"
+    conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
 
     cmds.extend([
-        venv_activate,
         f"cd {run_dir}",
-        "pwd",
-        "ls -la",
+        *(_aws_env_commands(region)),
         "mkdir -p logs",
     ])
 
@@ -447,7 +494,7 @@ def build_worker_commands(
                 f"if pgrep -af 'worker.py.*--port {port}\\b' >/dev/null; then "
                 f"echo 'worker {port} already running'; "
                 "else "
-                f"nohup python -u worker.py "
+                f"nohup {conda_run} python -u worker.py "
                 f"--dispatcher-address {dispatcher_address} "
                 f"--port {port} "
                 f"--worker-address {worker_host}:{port} "
@@ -455,14 +502,12 @@ def build_worker_commands(
                 "fi"
             )
         )
-        cmds.append("sleep 3")
+        cmds.append("sleep 5")
         cmds.append(
             (
                 f"if ! pgrep -af 'worker.py.*--port {port}\\b' >/dev/null; then "
                 f"echo 'worker {port} failed to start'; "
-                f"echo '==== worker_{port}.log ===='; "
                 f"cat logs/worker_{port}.log || true; "
-                f"echo '==== end worker_{port}.log ===='; "
                 "exit 1; "
                 "fi"
             )
@@ -484,34 +529,35 @@ def build_trainer_command(
     shuffle: bool,
     trainer_stagger_sec: float,
     out_dir: str,
+    region: str = "us-west-2",
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
 
-    venv_activate = f". {shlex.quote(repo_dir)}/.venv/bin/activate"
+    conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
+
     repeat_flag = "--repeat" if repeat else ""
     shuffle_flag = "--shuffle" if shuffle else ""
-    service_flag = f"--service {shlex.quote(service)}" if service else ""
+    service_flag = f"--service {service}" if service else ""
+
 
     cmds.extend([
-        venv_activate,
-        f"cd {shlex.quote(run_dir)}",
-        "pwd",
-        "ls -la",
-        f"mkdir -p {shlex.quote(out_dir)}",
+        f"cd {run_dir}",
+        *(_aws_env_commands(region)),
+        f"mkdir -p {out_dir}",
         (
-            f"python -u run_benchmark.py "
-            f"--mode {shlex.quote(mode)} "
+            f"{conda_run} python -u run_benchmark.py "
+            f"--mode {mode} "
             f"{service_flag} "
-            f"--model {shlex.quote(model)} "
-            f"--path {shlex.quote(path)} "
+            f"--model {model} "
+            f"--path {path} "
             f"--steps {steps} "
             f"--batch-size {batch_size} "
             f"--num-trainers {num_trainers} "
             f"--trainer-stagger-sec {trainer_stagger_sec} "
-            f"--out-dir {shlex.quote(out_dir)} "
+            f"--out-dir {out_dir} "
             f"{repeat_flag} {shuffle_flag}"
         ),
-        f"ls -R {shlex.quote(out_dir)} || true",
+        f"ls -R {out_dir} || true",
     ])
     return cmds
 
