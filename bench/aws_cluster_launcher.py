@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import shlex
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional
-
+import os
 import boto3
 
 
@@ -84,8 +83,6 @@ class AWSClusterLauncher:
         print(f"Launched {len(instance_ids)} {role} instances: {instance_ids}")
         return instance_ids
 
-
-
     def find_existing_instances(
         self,
         cluster_name: str,
@@ -135,12 +132,19 @@ class AWSClusterLauncher:
 
         return True
 
+    def reboot_instances(self, instance_ids: List[str]) -> None:
+        if not instance_ids:
+            return
+        self.ec2.reboot_instances(InstanceIds=instance_ids)
+        print(f"Reboot requested for: {instance_ids}")
+
     def ensure_instances(
         self,
         spec: NodeGroupSpec,
         cluster_name: str,
         role: str,
         extra_tags: Optional[Dict[str, str]] = None,
+        reboot_existing_on_reuse: bool = False,
     ) -> List[str]:
         existing = self.find_existing_instances(
             cluster_name=cluster_name,
@@ -159,7 +163,14 @@ class AWSClusterLauncher:
             self.ec2.start_instances(InstanceIds=stopped_ids)
             print(f"Started stopped {role} instances: {stopped_ids}")
 
+        running_ids = [inst["InstanceId"] for inst in chosen if inst["State"]["Name"] == "running"]
+
         missing = spec.count - len(chosen_ids)
+
+        if reboot_existing_on_reuse and running_ids:
+            self.reboot_instances(running_ids)
+            print(f"Rebooting reused {role} instances: {running_ids}")
+
         if missing <= 0:
             print(f"Reusing existing {role} instances: {chosen_ids}")
             return chosen_ids
@@ -258,7 +269,7 @@ class AWSClusterLauncher:
         cmd_id = resp["Command"]["CommandId"]
         print(f"Sent SSM command {cmd_id} to {instance_ids}: {comment}")
         return cmd_id
-    
+
     def wait_for_command(
         self,
         command_id: str,
@@ -281,7 +292,6 @@ class AWSClusterLauncher:
                         InstanceId=iid,
                     )
                 except self.ssm.exceptions.InvocationDoesNotExist:
-                    # SSM Run Command is eventually consistent.
                     all_ok = False
                     continue
 
@@ -309,18 +319,19 @@ class AWSClusterLauncher:
             time.sleep(5)
 
         raise TimeoutError(f"Timed out waiting for command {command_id}")
-    
+
     def stop_instances(self, instance_ids: List[str]) -> None:
         if not instance_ids:
             return
         self.ec2.stop_instances(InstanceIds=instance_ids)
         print(f"Stop requested for: {instance_ids}")
-    
+
     def terminate_instances(self, instance_ids: List[str]) -> None:
         if not instance_ids:
             return
         self.ec2.terminate_instances(InstanceIds=instance_ids)
         print(f"Terminate requested for: {instance_ids}")
+
 
 def _aws_env_commands(region: str) -> List[str]:
     return [
@@ -400,31 +411,25 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
         f"cd {code_dir}",
         "git pull --ff-only || true",
 
-        # Install Miniconda if needed
         (
             f"if [ ! -x {conda_bin} ]; then "
             "  mkdir -p /tmp/miniconda-installer; "
             "  wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh "
             "    -O /tmp/miniconda-installer/miniconda.sh; "
             f"  sudo bash /tmp/miniconda-installer/miniconda.sh -b -u -p {conda_dir}; "
-
             "fi"
         ),
 
-        # Make sure conda is usable in non-interactive shell
         f"{conda_bin} --version",
-        # Accept ToS (required for non-interactive)
         f"{conda_bin} tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main",
         f"{conda_bin} tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r",
 
-        # Create env if missing
         (
             f"if ! {conda_bin} env list | awk '{{print $1}}' | grep -qx {env_name}; then "
             f"  {conda_bin} create -y -n {env_name} python=3.10; "
             "fi"
         ),
 
-        # Install project deps inside env
         f"{conda_bin} run -n {env_name} python --version",
         f"{conda_bin} run -n {env_name} python -m pip install --upgrade pip",
         f"{conda_bin} run -n {env_name} python -m pip install -r requirements.txt",
@@ -433,13 +438,13 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
         "mkdir -p logs",
     ]
 
+
 def build_dispatcher_command(
     repo_dir: str,
     run_dir: str,
     dispatcher_port: int,
     work_dir: str,
     region: str = "us-west-2",
-
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
     conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
@@ -470,6 +475,7 @@ def build_dispatcher_command(
     ])
     return cmds
 
+
 def build_worker_commands(
     repo_dir: str,
     run_dir: str,
@@ -477,7 +483,6 @@ def build_worker_commands(
     worker_ports: List[int],
     worker_host: str,
     region: str = "us-west-2",
-
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
     conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
@@ -515,6 +520,7 @@ def build_worker_commands(
 
     return cmds
 
+
 def build_trainer_command(
     repo_dir: str,
     run_dir: str,
@@ -532,13 +538,11 @@ def build_trainer_command(
     region: str = "us-west-2",
 ) -> List[str]:
     cmds = _bootstrap_repo_commands(repo_dir)
-
     conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
 
     repeat_flag = "--repeat" if repeat else ""
     shuffle_flag = "--shuffle" if shuffle else ""
     service_flag = f"--service {service}" if service else ""
-
 
     cmds.extend([
         f"cd {run_dir}",
@@ -560,6 +564,20 @@ def build_trainer_command(
         f"ls -R {out_dir} || true",
     ])
     return cmds
+
+
+def build_upload_results_command(
+    remote_out_dir: str,
+    s3_prefix: str,
+    region: str = "us-west-2",
+) -> List[str]:
+    conda_run = "/opt/miniconda3/bin/conda run -n tfbench"
+    return [
+        "set -eux",
+        *(_aws_env_commands(region)),
+        f"test -d {remote_out_dir}",
+        f"{conda_run} aws s3 cp {remote_out_dir} {s3_prefix} --recursive",
+    ]
 
 def load_config(path: str) -> Dict:
     with open(path, "r", encoding="utf-8") as f:
@@ -584,6 +602,8 @@ def main():
     cfg = load_config(args.config)
     region = cfg["region"]
     cluster_name = cfg["cluster_name"]
+    reboot_existing_on_reuse = bool(cfg.get("reboot_existing_on_reuse", False))
+    results_s3_prefix = cfg["results_s3_prefix"]
 
     launcher = AWSClusterLauncher(region=region)
 
@@ -600,18 +620,44 @@ def main():
     launched = {"dispatcher": [], "workers": [], "trainers": []}
 
     try:
-        # 1) Ensure dispatcher
+        # ------------------------------------------------------------------
+        # Phase 1: Ensure/reuse/reboot ALL instances up front
+        # ------------------------------------------------------------------
         dispatcher_ids = launcher.ensure_instances(
             spec=dispatcher_spec,
             cluster_name=cluster_name,
             role="dispatcher",
+            reboot_existing_on_reuse=reboot_existing_on_reuse,
         )
         launched["dispatcher"] = dispatcher_ids
-        launcher.wait_for_instances_running(dispatcher_ids)
-        launcher.wait_for_ssm_online(dispatcher_ids)
-        dispatcher_ip = launcher.get_private_ip_map(dispatcher_ids)[dispatcher_ids[0]]
 
-        # 2) Ensure dispatcher process
+        worker_ids = launcher.ensure_instances(
+            spec=worker_spec,
+            cluster_name=cluster_name,
+            role="worker",
+            reboot_existing_on_reuse=reboot_existing_on_reuse,
+        )
+        launched["workers"] = worker_ids
+
+        trainer_ids = launcher.ensure_instances(
+            spec=trainer_spec,
+            cluster_name=cluster_name,
+            role="trainer",
+            reboot_existing_on_reuse=reboot_existing_on_reuse,
+        )
+        launched["trainers"] = trainer_ids
+
+        all_ids = dispatcher_ids + worker_ids + trainer_ids
+
+        launcher.wait_for_instances_running(all_ids)
+        launcher.wait_for_ssm_online(all_ids)
+
+        dispatcher_ip = launcher.get_private_ip_map(dispatcher_ids)[dispatcher_ids[0]]
+        worker_ip_map = launcher.get_private_ip_map(worker_ids)
+
+        # ------------------------------------------------------------------
+        # Phase 2: Start dispatcher only after ALL instances are ready
+        # ------------------------------------------------------------------
         cmd_id = launcher.send_shell_commands(
             instance_ids=dispatcher_ids,
             commands=build_dispatcher_command(
@@ -619,6 +665,7 @@ def main():
                 dispatcher_port=dispatcher_port,
                 work_dir=dispatcher_work_dir,
                 run_dir=cfg["run_dir"],
+                region=region,
             ),
             comment="Start tf.data dispatcher if needed",
         )
@@ -628,18 +675,9 @@ def main():
         service = f"grpc://{dispatcher_address}"
         print(f"Dispatcher service: {service}")
 
-        # 3) Ensure worker nodes
-        worker_ids = launcher.ensure_instances(
-            spec=worker_spec,
-            cluster_name=cluster_name,
-            role="worker",
-        )
-        launched["workers"] = worker_ids
-        launcher.wait_for_instances_running(worker_ids)
-        launcher.wait_for_ssm_online(worker_ids)
-        worker_ip_map = launcher.get_private_ip_map(worker_ids)
-
-        # 4) Ensure worker processes
+        # ------------------------------------------------------------------
+        # Phase 3: Start workers
+        # ------------------------------------------------------------------
         for iid in worker_ids:
             worker_host = worker_ip_map[iid]
             cmd_id = launcher.send_shell_commands(
@@ -650,24 +688,18 @@ def main():
                     worker_ports=worker_ports_per_node,
                     worker_host=worker_host,
                     run_dir=cfg["run_dir"],
+                    region=region,
                 ),
                 comment=f"Start tf.data workers on {iid} if needed",
             )
             launcher.wait_for_command(cmd_id, [iid])
 
-        # 5) Ensure trainer nodes
-        trainer_ids = launcher.ensure_instances(
-            spec=trainer_spec,
-            cluster_name=cluster_name,
-            role="trainer",
-        )
-        launched["trainers"] = trainer_ids
-        launcher.wait_for_instances_running(trainer_ids)
-        launcher.wait_for_ssm_online(trainer_ids)
-
-        # 6) Run benchmark on trainer nodes
+        # ------------------------------------------------------------------
+        # Phase 4: Run trainers and upload results
+        # ------------------------------------------------------------------
         for idx, iid in enumerate(trainer_ids):
             out_dir = f"{benchmark['out_dir']}/node_{idx}"
+
             cmd_id = launcher.send_shell_commands(
                 instance_ids=[iid],
                 commands=build_trainer_command(
@@ -684,6 +716,7 @@ def main():
                     shuffle=bool(benchmark.get("shuffle", False)),
                     trainer_stagger_sec=float(benchmark.get("trainer_stagger_sec", 1.0)),
                     out_dir=out_dir,
+                    region=region,
                 ),
                 comment=f"Run benchmark on trainer node {iid}",
                 timeout_sec=int(benchmark.get("timeout_sec", 7200)),
@@ -694,14 +727,84 @@ def main():
                 timeout_sec=int(benchmark.get("timeout_sec", 7200)),
             )
 
-        print("\nCluster launch and benchmark run complete.")
-        print(json.dumps(launched, indent=2))
+            upload_cmd_id = launcher.send_shell_commands(
+                instance_ids=[iid],
+                commands=build_upload_results_command(
+                    remote_out_dir=out_dir,
+                    s3_prefix=f"{results_s3_prefix}/node_{idx}",
+                    region=region,
+                ),
+                comment=f"Upload benchmark results from trainer node {iid}",
+                timeout_sec=int(benchmark.get("upload_timeout_sec", 1800)),
+            )
+            launcher.wait_for_command(
+                upload_cmd_id,
+                [iid],
+                timeout_sec=int(benchmark.get("upload_timeout_sec", 1800)),
+            )
 
+        print("\nCluster launch, reboot/reuse, benchmark run, and S3 upload complete.")
+        print(json.dumps(launched, indent=2))
+        print(f"Results uploaded under: {results_s3_prefix}")
+
+        local_results_dir = cfg.get("local_results_dir", "./results")
+
+        download_s3_prefix(
+            s3_prefix=results_s3_prefix,
+            local_dir=local_results_dir,
+            region=region,
+        )
+   
     finally:
         if args.terminate_on_finish:
             all_ids = launched["dispatcher"] + launched["workers"] + launched["trainers"]
             launcher.terminate_instances(all_ids)
+        else:
+            #shutdown all instances to save costs, but keep them around for debugging if needed
+            all_ids = launched["dispatcher"] + launched["workers"] + launched["trainers"]
+            launcher.stop_instances(all_ids)
+        
+        
 
+def download_s3_prefix(
+    s3_prefix: str,
+    local_dir: str,
+    region: str,
+):
+    """
+    Download all objects under an S3 prefix to a local directory.
+    """
+    assert s3_prefix.startswith("s3://")
+
+    s3 = boto3.client("s3", region_name=region)
+
+    # Parse bucket + prefix
+    parts = s3_prefix.replace("s3://", "").split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+
+    paginator = s3.get_paginator("list_objects_v2")
+
+    print(f"Downloading s3://{bucket}/{prefix} -> {local_dir}")
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+
+            # Skip "directory" placeholders
+            if key.endswith("/"):
+                continue
+
+            # Compute local path
+            rel_path = key[len(prefix):].lstrip("/")
+            local_path = os.path.join(local_dir, rel_path)
+
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+            print(f"Downloading {key} -> {local_path}")
+            s3.download_file(bucket, key, local_path)
+
+    print("Download complete.")
 
 if __name__ == "__main__":
     main()

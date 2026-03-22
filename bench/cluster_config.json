@@ -1,12 +1,14 @@
 {
   "region": "us-west-2",
   "cluster_name": "tfdata-bench-01",
+  "reboot_existing_on_reuse": true,
 
   "code_dir": "/opt/tfdata-exploration",
   "run_dir": "/opt/tfdata-exploration/bench",
   "dispatcher_port": 5000,
   "dispatcher_work_dir": "/tmp/tf_data_dispatcher",
   "worker_ports_per_node": [5001, 5002],
+  "results_s3_prefix": "s3://tfbench-results/tfdata-bench-01",
 
   "dispatcher_node": {
     "name": "dispatcher",
@@ -19,7 +21,6 @@
     "key_name": null,
     "user_data": null,
     "root_volume_size_gb": 100
-
   },
 
   "worker_node": {
@@ -33,7 +34,6 @@
     "key_name": null,
     "user_data": null,
     "root_volume_size_gb": 100
-
   },
 
   "trainer_node": {
@@ -50,9 +50,9 @@
   },
 
   "benchmark": {
-    "mode": "service_cache",
+    "mode": "service_cache", 
     "model": "mobilenet_v2",
-    "path": "s3://sdl-cifar10/train", 
+    "path": "s3://sdl-cifar10/train",
     "steps": 5,
     "batch_size": 32,
     "num_trainers_per_node": 1,
@@ -60,6 +60,7 @@
     "shuffle": false,
     "trainer_stagger_sec": 1.0,
     "out_dir": "/tmp/benchmark_results",
-    "timeout_sec": 7200
+    "timeout_sec": 7200,
+    "upload_timeout_sec": 1800
   }
 }

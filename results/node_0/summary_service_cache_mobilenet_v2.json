@@ -1,0 +1,26 @@
+[
+  {
+    "avg_compute_time_sec": 5.523617087799996,
+    "avg_fetch_time_sec": 0.22049763560000316,
+    "avg_step_time_sec": 5.7441147234,
+    "batch_size": 32,
+    "examples_per_sec": 5.570862868857199,
+    "final_loss": 0.19348013401031494,
+    "first_batch_time_sec": 1.097255306000008,
+    "hostname": "ip-172-31-14-239",
+    "mode": "service_cache",
+    "model_name": "mobilenet_v2",
+    "num_examples": 160,
+    "p50_fetch_time_sec": 0.0012888250000031576,
+    "p50_step_time_sec": 2.647281817999996,
+    "p95_fetch_time_sec": 0.0019488920000014787,
+    "p95_step_time_sec": 2.653186158000011,
+    "pid": 1286,
+    "service": "grpc://172.31.1.246:5000",
+    "started_at_unix": 1774173437.2090228,
+    "steps": 5,
+    "total_time_sec": 28.72086493000002,
+    "trainer_id": "T0",
+    "trainer_name": "Trainer0"
+  }
+]
