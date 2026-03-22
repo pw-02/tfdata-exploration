@@ -1,5 +1,4 @@
 import argparse
-import socket
 import time
 
 import tensorflow as tf
@@ -13,33 +12,37 @@ def main():
     parser.add_argument(
         "--worker-address",
         type=str,
-        default=None,
-        help="Advertised worker address host:port.",
+        required=True,
+        help="Advertised worker address host:port reachable by trainers.",
+    )
+    parser.add_argument(
+        "--bind-address",
+        type=str,
+        default="0.0.0.0",
+        help="Local interface to bind the worker server to.",
     )
     args = parser.parse_args()
 
-    worker_address = args.worker_address
-    if worker_address is None:
-        hostname = socket.gethostname()
-        worker_address = f"{hostname}:{args.port}"
-
-    server = tf.data.experimental.service.WorkerServer(
-        tf.data.experimental.service.WorkerConfig(
-            dispatcher_address=args.dispatcher_address,
-            worker_address=worker_address,
-            port=args.port,
-        )
+    config = tf.data.experimental.service.WorkerConfig(
+        dispatcher_address=args.dispatcher_address,
+        worker_address=args.worker_address,
+        port=args.port,
+        protocol="grpc",
+        worker_tags=None,
     )
 
+    server = tf.data.experimental.service.WorkerServer(config)
+
     print(
-        f"Worker started: port={args.port} "
+        f"Worker started: "
+        f"bind_address={args.bind_address} "
+        f"port={args.port} "
         f"dispatcher={args.dispatcher_address} "
-        f"worker_address={worker_address}"
+        f"worker_address={args.worker_address}"
     )
 
     try:
-        while True:
-            time.sleep(60)
+        server.join()
     except KeyboardInterrupt:
         print(f"Stopping worker on port {args.port}...")
 
