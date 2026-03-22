@@ -22,7 +22,7 @@
 
   "worker_node": {
     "name": "worker",
-    "count": 2,
+    "count": 1,
     "instance_type": "m6i.large",
     "ami_id": "ami-0d76b909de1a0595d",
     "subnet_id": "subnet-09de785217c7ff4f8",

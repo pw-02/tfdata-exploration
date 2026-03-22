@@ -318,6 +318,8 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
         "pkill -f dispatcher.py || true",
         "pkill -f worker.py || true",
         "pkill -f run_benchmark.py || true",
+        "pkill -f trainer.py || true",
+
         "sleep 2",
 
         (
