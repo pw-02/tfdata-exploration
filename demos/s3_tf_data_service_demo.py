@@ -34,7 +34,7 @@ def demo_with_tfdata_service():
     print("Service:", service)
 
     builder = S3ImageDatasetBuilder(
-        path="s3://imagenet1k-sdl/train/",
+        path="s3://sdl-cifar10/train", #"s3://imagenet1k-sdl/train/",
         image_size=224,
         batch_size=16,
     )

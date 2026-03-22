@@ -1,0 +1,72 @@
+On dispatcher machine (Assuming machine is reachable as dispatcher-host): 
+python dispatcher.py --port 5000 --work-dir /tmp/tf_data_dispatcher
+
+Start worker processes on worker nodes. 
+The important part is that --worker-address is the network-reachable host:port that the 
+dispatcher and clients can use.
+
+Worker node A:
+    python worker.py \
+    --dispatcher-address dispatcher-host:5000 \
+    --port 5001 \
+    --worker-address worker-node-a:5001
+
+    python worker.py \
+    --dispatcher-address dispatcher-host:5000 \
+    --port 5002 \
+    --worker-address worker-node-a:5002
+
+Worker node B:
+    python worker.py \
+    --dispatcher-address dispatcher-host:5000 \
+    --port 5001 \
+    --worker-address worker-node-b:5001
+
+    python worker.py \
+    --dispatcher-address dispatcher-host:5000 \
+    --port 5002 \
+    --worker-address worker-node-b:5002
+
+
+3 Run trainers against the remote dispatcher:
+
+On trainer machine:
+    python run_benchmark.py \
+    --mode service_cache \
+    --service grpc://dispatcher-host:5000 \
+    --model mobilenet_v2 \
+    --path s3://sdl-cifar10/train \
+    --steps 100 \
+    --batch-size 32 \
+    --num-trainers 2 \
+    --repeat \
+    --trainer-stagger-sec 1.0 \
+    --out-dir ./results_remote_service_cache
+
+Or without cache:
+    python run_benchmark.py \
+    --mode service \
+    --service grpc://dispatcher-host:5000 \
+    --model mobilenet_v2 \
+    --path s3://sdl-cifar10/train \
+    --steps 100 \
+    --batch-size 32 \
+    --num-trainers 2 \
+    --repeat \
+    --trainer-stagger-sec 1.0 \
+    --out-dir ./results_remote_service
+
+(4) Run matrix against a remote dispatcher:
+
+    python run_matrix.py \
+    --path s3://sdl-cifar10/train \
+    --service grpc://dispatcher-host:5000 \
+    --modes service service_cache \
+    --models mobilenet_v2 \
+    --batch-sizes 32 \
+    --steps-list 100 \
+    --num-trainers-list 2 4 \
+    --num-workers-list 4 \
+    --shuffle-options 0 1 \
+    --repeat-options 1 \
+    --results-root ./matrix_results_remote

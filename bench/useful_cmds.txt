@@ -1,0 +1,99 @@
+python aws_cluster_launcher.py --config cluster_config.json
+
+python aws_cluster_launcher.py --config cluster_config.json --terminate-on-finish
+
+
+Direct baseline:
+python run_benchmark.py \
+  --mode direct \
+  --model mobilenet_v2 \
+  --path s3://sdl-cifar10/train \
+  --steps 100 \
+  --batch-size 32 \
+  --num-trainers 2 \
+  --repeat \
+  --out-dir ./results_direct_mobilenet
+
+
+tf.data service without cache:
+python run_benchmark.py \
+  --mode service \
+  --model mobilenet_v2 \
+  --path s3://sdl-cifar10/train \
+  --steps 100 \
+  --batch-size 32 \
+  --num-trainers 2 \
+  --num-workers 2 \
+  --repeat \
+  --out-dir ./results_service_mobilenet
+
+python run_benchmark.py \
+  --mode service_cache \
+  --model mobilenet_v2 \
+  --path s3://sdl-cifar10/train \
+  --steps 100 \
+  --batch-size 32 \
+  --num-trainers 2 \
+  --num-workers 2 \
+  --repeat \
+  --trainer-stagger-sec 1.0 \
+  --out-dir ./results_service_cache_mobilenet
+
+
+Small starter matrix
+
+This runs:
+direct
+service
+service_cache
+
+with:
+MobileNetV2
+batch size 32
+2 trainers
+2 workers for service modes
+shuffle off and on
+
+python run_matrix.py \
+  --path s3://sdl-cifar10/train \
+  --modes direct service service_cache \
+  --models mobilenet_v2 \
+  --batch-sizes 32 \
+  --steps-list 100 \
+  --num-trainers-list 2 \
+  --num-workers-list 2 \
+  --shuffle-options 0 1 \
+  --repeat-options 1 \
+  --results-root ./matrix_results_mobilenet
+
+
+Slightly bigger matrix
+This adds 4 trainers:
+python run_matrix.py \
+  --path s3://sdl-cifar10/train \
+  --modes direct service service_cache \
+  --models mobilenet_v2 \
+  --batch-sizes 32 \
+  --steps-list 100 \
+  --num-trainers-list 2 4 \
+  --num-workers-list 2 \
+  --shuffle-options 0 1 \
+  --repeat-options 1 \
+  --results-root ./matrix_results_mobilenet_2x4
+
+
+  Compare MobileNetV2 vs ResNet50:
+  python run_matrix.py \
+  --path s3://sdl-cifar10/train \
+  --modes direct service service_cache \
+  --models mobilenet_v2 resnet50 \
+  --batch-sizes 32 \
+  --steps-list 100 \
+  --num-trainers-list 2 \
+  --num-workers-list 2 \
+  --shuffle-options 0 \
+  --repeat-options 1 \
+  --results-root ./matrix_results_compare_models
+
+
+

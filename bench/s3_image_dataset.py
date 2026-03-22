@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple, Optional
 import boto3
 import botocore
 import tensorflow as tf
-import tensorflow_io as tfio  # often needed for s3:// support
+import tensorflow_io as tfio  # keep imported so s3:// support is registered
 
 
 @dataclass
@@ -40,13 +40,6 @@ class S3ImageDatasetBuilder:
         self.s3 = boto3.client("s3")
 
     def get_samples_from_s3(self) -> Dict[str, List[str]]:
-        """
-        Returns:
-            {
-                "cat": ["train/cat/a.jpg", "train/cat/b.jpg"],
-                "dog": ["train/dog/c.jpg"]
-            }
-        """
         s3_url = S3Url.parse(self.path)
         s3_bucket = s3_url.bucket
         s3_prefix = s3_url.key.rstrip("/")
@@ -78,7 +71,6 @@ class S3ImageDatasetBuilder:
                 rel = key[len(s3_prefix):].lstrip("/")
                 parts = rel.split("/")
                 if len(parts) < 2:
-                    # Skip files not under class_name/file structure
                     continue
 
                 class_name = parts[0]
@@ -100,12 +92,6 @@ class S3ImageDatasetBuilder:
     def flatten_samples(
         self, samples: Dict[str, List[str]]
     ) -> Tuple[List[str], List[int], Dict[str, int]]:
-        """
-        Converts:
-            {"cat": ["train/cat/a.jpg"], "dog": ["train/dog/b.jpg"]}
-        into:
-            paths, labels, class_to_idx
-        """
         s3_url = S3Url.parse(self.path)
         bucket = s3_url.bucket
 
@@ -124,19 +110,9 @@ class S3ImageDatasetBuilder:
             raise RuntimeError("No paths were generated from samples.")
 
         return paths, labels, class_to_idx
-    
-
-    def read_s3_bytes(self, path_bytes):
-        path = path_bytes.decode("utf-8")
-        assert path.startswith("s3://")
-        no_scheme = path[len("s3://"):]
-        bucket, key = no_scheme.split("/", 1)
-        obj = self.s3.get_object(Bucket=bucket, Key=key)
-        return obj["Body"].read()
 
     def load_and_preprocess(self, path: tf.Tensor, label: tf.Tensor):
         image_bytes = tf.io.read_file(path)
-    
         image = tf.io.decode_image(image_bytes, channels=3, expand_animations=False)
         image.set_shape([None, None, 3])
 
@@ -144,7 +120,6 @@ class S3ImageDatasetBuilder:
         image = tf.cast(image, tf.float32) / 255.0
 
         return image, tf.cast(label, tf.int32)
-    
 
     def build_dataset(
         self,
@@ -154,6 +129,7 @@ class S3ImageDatasetBuilder:
         repeat: bool = False,
         trainer_id: Optional[str] = None,
         use_cross_trainer_cache: bool = False,
+        reshuffle_each_iteration: bool = False,
     ) -> Tuple[tf.data.Dataset, Dict[str, int]]:
         samples = self.get_samples_from_s3()
         paths, labels, class_to_idx = self.flatten_samples(samples)
@@ -162,11 +138,14 @@ class S3ImageDatasetBuilder:
 
         ds = tf.data.Dataset.from_tensor_slices((paths, labels))
 
-        if shuffle:
-            ds = ds.shuffle(buffer_size=len(paths), reshuffle_each_iteration=True)
-
         if repeat:
             ds = ds.repeat()
+
+        if shuffle:
+            ds = ds.shuffle(
+                buffer_size=len(paths),
+                reshuffle_each_iteration=reshuffle_each_iteration,
+            )
 
         ds = ds.map(self.load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(self.batch_size, drop_remainder=False)
@@ -182,15 +161,10 @@ class S3ImageDatasetBuilder:
                 if trainer_id is None:
                     raise ValueError("trainer_id must be provided when use_cross_trainer_cache=True")
                 distribute_kwargs["cross_trainer_cache"] = (
-                    tf.data.experimental.service.CrossTrainerCache(
-                        trainer_id=trainer_id
-                    )
+                    tf.data.experimental.service.CrossTrainerCache(trainer_id=trainer_id)
                 )
 
-            ds = ds.apply(
-                tf.data.experimental.service.distribute(**distribute_kwargs)
-            )
+            ds = ds.apply(tf.data.experimental.service.distribute(**distribute_kwargs))
 
         ds = ds.prefetch(tf.data.AUTOTUNE)
         return ds, class_to_idx
-
