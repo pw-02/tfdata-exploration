@@ -304,7 +304,6 @@ class AWSClusterLauncher:
             return
         self.ec2.terminate_instances(InstanceIds=instance_ids)
         print(f"Terminate requested for: {instance_ids}")
-
 def _bootstrap_repo_commands(code_dir: str) -> List[str]:
     repo_url = "https://github.com/pw-02/tfdata-exploration.git"
     repo_parent = "/".join(code_dir.rstrip("/").split("/")[:-1]) or "/"
@@ -314,14 +313,14 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
     return [
         "set -eux",
 
-        # 🔥 Kill old cluster processes (safe, targeted)
+        # 🔥 Kill old cluster processes
         "pkill -f dispatcher.py || true",
         "pkill -f worker.py || true",
         "pkill -f run_benchmark.py || true",
         "pkill -f trainer.py || true",
-
         "sleep 2",
 
+        # 📦 Install system deps
         (
             "SUDO='' ; "
             "if command -v sudo >/dev/null 2>&1; then SUDO='sudo'; fi ; "
@@ -340,6 +339,8 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
             "  echo 'No supported package manager found'; exit 1; "
             "fi"
         ),
+
+        # 📂 Clone repo
         f"mkdir -p {repo_parent}",
         f"cd {repo_parent}",
         (
@@ -347,15 +348,41 @@ def _bootstrap_repo_commands(code_dir: str) -> List[str]:
             f"git clone {repo_url} {repo_name}; "
             "fi"
         ),
+
+        # 📦 Setup Python env
         f"cd {code_dir}",
         "git pull --ff-only || true",
+
+        # Fix permissions (important!)
+        f"sudo chown -R $(id -un):$(id -gn) {code_dir} || true",
+
         f"python3 -m venv {venv_dir}",
         f". {venv_dir}/bin/activate",
+
         "python -m pip install --upgrade pip",
         "python -m pip install -r requirements.txt",
+
+        # ✅ Install AWS CLI (in venv)
+        "python -m pip install awscli",
+
+        # 🔍 Verify AWS works (helps debugging)
+        "aws --version",
+        "aws sts get-caller-identity || true",
+
+        # # 📥 Optional: download dataset locally (recommended)
+        # "mkdir -p /tmp/sdl-cifar10/train",
+        # (
+        #     "if [ ! -d /tmp/sdl-cifar10/train ] || "
+        #     "[ -z \"$(find /tmp/sdl-cifar10/train -type f 2>/dev/null | head -1)\" ]; then "
+        #     "  echo 'Syncing dataset from S3...'; "
+        #     "  aws s3 sync s3://sdl-cifar10/train /tmp/sdl-cifar10/train; "
+        #     "else "
+        #     "  echo 'Dataset already present, skipping sync'; "
+        #     "fi"
+        # ),
+
         "mkdir -p logs",
     ]
-
 def build_dispatcher_command(
     repo_dir: str,
     run_dir: str,

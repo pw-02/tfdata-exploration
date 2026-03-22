@@ -47,7 +47,7 @@
   "benchmark": {
     "mode": "service_cache",
     "model": "mobilenet_v2",
-    "path": "s3://sdl-cifar10/train",
+    "path": "s3://sdl-cifar10/train", 
     "steps": 20,
     "batch_size": 32,
     "num_trainers_per_node": 1,
