@@ -127,7 +127,7 @@ def main():
     parser.add_argument("--results-root", type=str, default="./bench/bmatrix_results")
 
     parser.add_argument("--service", type=str, default=None)
-    parser.add_argument("--launch-local-service", action="store_true")
+    parser.add_argument("--launch-local-service", action="store_true", default=True)
     parser.add_argument("--dispatcher-port", type=int, default=5000)
     parser.add_argument("--worker-base-port", type=int, default=5001)
 

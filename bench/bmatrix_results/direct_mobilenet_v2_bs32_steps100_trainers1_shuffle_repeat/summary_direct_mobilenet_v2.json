@@ -1,0 +1,26 @@
+[
+  {
+    "avg_compute_time_sec": 2.0211309589000668,
+    "avg_fetch_time_sec": 0.008037698589942011,
+    "avg_step_time_sec": 2.0291686574900085,
+    "batch_size": 32,
+    "examples_per_sec": 15.761617588537334,
+    "final_loss": 1.9045699834823608,
+    "first_batch_time_sec": 0.5167129489991567,
+    "hostname": "PatricksPC",
+    "mode": "direct",
+    "model_name": "mobilenet_v2",
+    "num_examples": 3200,
+    "p50_fetch_time_sec": 0.001070669999535312,
+    "p50_step_time_sec": 1.315071240999714,
+    "p95_fetch_time_sec": 0.016547195999919495,
+    "p95_step_time_sec": 4.893860385999687,
+    "pid": 185199,
+    "service": null,
+    "started_at_unix": 1774155852.4373565,
+    "steps": 100,
+    "total_time_sec": 203.02484703899972,
+    "trainer_id": "T0",
+    "trainer_name": "Trainer0"
+  }
+]

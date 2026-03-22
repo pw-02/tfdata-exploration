@@ -8,7 +8,7 @@ import tensorflow as tf
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--work-dir", type=str, default="./tf_data_dispatcher")
+    parser.add_argument("--work-dir", type=str, default="/tmp/tf_data_dispatcher")
     args = parser.parse_args()
 
     os.makedirs(args.work_dir, exist_ok=True)

@@ -77,7 +77,7 @@ def main():
     parser.add_argument("--worker-base-port", type=int, default=5001)
     parser.add_argument("--job-name", type=str, default="image-benchmark")
     parser.add_argument("--trainer-stagger-sec", type=float, default=1.0)
-    parser.add_argument("--out-dir", type=str, default="./bench/benchmark_results")
+    parser.add_argument("--out-dir", type=str, default=".benchmark_results")
 
     args = parser.parse_args()
 
@@ -99,7 +99,7 @@ def main():
         else:
             if args.launch_local_service:
                 dispatcher = start_process([
-                    sys.executable, "bench/dispatcher.py",
+                    sys.executable, "dispatcher.py",
                     "--port", str(args.dispatcher_port),
                     "--work-dir", "/tmp/tf_data_dispatcher_bench",
                 ])
@@ -109,7 +109,7 @@ def main():
                     port = args.worker_base_port + i
                     worker_address = f"localhost:{port}"
                     p = start_process([
-                        sys.executable, "bench/worker.py",
+                        sys.executable, "worker.py",
                         "--dispatcher-address", f"localhost:{args.dispatcher_port}",
                         "--port", str(port),
                         "--worker-address", worker_address,
@@ -133,7 +133,7 @@ def main():
             metrics_paths.append(str(metrics_path))
 
             cmd = [
-                sys.executable, "bench/trainer.py",
+                sys.executable, "trainer.py",
                 "--trainer-name", trainer_name,
                 "--trainer-id", trainer_id,
                 "--mode", args.mode,

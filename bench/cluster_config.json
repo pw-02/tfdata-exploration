@@ -2,7 +2,8 @@
   "region": "us-west-2",
   "cluster_name": "tfdata-bench-01",
 
-  "code_dir": "/opt/tfdata-bench",
+  "code_dir": "/opt/tfdata-exploration",
+  "run_dir": "/opt/tfdata-exploration/bench",
   "dispatcher_port": 5000,
   "dispatcher_work_dir": "/tmp/tf_data_dispatcher",
   "worker_ports_per_node": [5001, 5002],
@@ -11,10 +12,10 @@
     "name": "dispatcher",
     "count": 1,
     "instance_type": "m6i.large",
-    "ami_id": "ami-0123456789abcdef0",
-    "subnet_id": "subnet-aaaa1111",
-    "security_group_ids": ["sg-aaaa1111"],
-    "iam_instance_profile_name": "ec2-ssm-role",
+    "ami_id": "ami-0d76b909de1a0595d",
+    "subnet_id": "subnet-09de785217c7ff4f8",
+    "security_group_ids": ["sg-0747915164da07137"],
+    "iam_instance_profile_name": "TFDataBenchSSMInstanceProfile",
     "key_name": null,
     "user_data": null
   },
@@ -22,11 +23,11 @@
   "worker_node": {
     "name": "worker",
     "count": 2,
-    "instance_type": "c6i.2xlarge",
-    "ami_id": "ami-0123456789abcdef0",
-    "subnet_id": "subnet-aaaa1111",
-    "security_group_ids": ["sg-aaaa1111"],
-    "iam_instance_profile_name": "ec2-ssm-role",
+    "instance_type": "m6i.large",
+    "ami_id": "ami-0d76b909de1a0595d",
+    "subnet_id": "subnet-09de785217c7ff4f8",
+    "security_group_ids": ["sg-0747915164da07137"],
+    "iam_instance_profile_name": "TFDataBenchSSMInstanceProfile",
     "key_name": null,
     "user_data": null
   },
@@ -34,11 +35,11 @@
   "trainer_node": {
     "name": "trainer",
     "count": 1,
-    "instance_type": "g5.xlarge",
-    "ami_id": "ami-0123456789abcdef0",
-    "subnet_id": "subnet-aaaa1111",
-    "security_group_ids": ["sg-aaaa1111"],
-    "iam_instance_profile_name": "ec2-ssm-role",
+    "instance_type": "m6i.large",
+    "ami_id": "ami-0d76b909de1a0595d",
+    "subnet_id": "subnet-09de785217c7ff4f8",
+    "security_group_ids": ["sg-0747915164da07137"],
+    "iam_instance_profile_name": "TFDataBenchSSMInstanceProfile",
     "key_name": null,
     "user_data": null
   },
@@ -47,7 +48,7 @@
     "mode": "service_cache",
     "model": "mobilenet_v2",
     "path": "s3://sdl-cifar10/train",
-    "steps": 100,
+    "steps": 20,
     "batch_size": 32,
     "num_trainers_per_node": 2,
     "repeat": true,
@@ -57,4 +58,3 @@
     "timeout_sec": 7200
   }
 }
-
