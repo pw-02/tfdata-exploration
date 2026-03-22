@@ -67,7 +67,7 @@ def main():
     )
     parser.add_argument(
         "--launch-local-service",
-        default=True,
+        default=False,
         action="store_true",
         help="Launch local dispatcher/workers instead of using --service.",
     )

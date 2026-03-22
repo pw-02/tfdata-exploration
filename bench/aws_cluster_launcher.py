@@ -293,6 +293,12 @@ class AWSClusterLauncher:
 
         raise TimeoutError(f"Timed out waiting for command {command_id}")
     
+    def stop_instances(self, instance_ids: List[str]) -> None:
+        if not instance_ids:
+            return
+        self.ec2.stop_instances(InstanceIds=instance_ids)
+        print(f"Stop requested for: {instance_ids}")
+    
     def terminate_instances(self, instance_ids: List[str]) -> None:
         if not instance_ids:
             return
